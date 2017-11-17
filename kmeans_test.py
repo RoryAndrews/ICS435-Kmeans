@@ -20,6 +20,9 @@ def main(args):
     elif args.get('test') == 'skewing':
         skewing_test(**args)
 
+    elif args.get('test') == 'unequal':
+        unequal_var_test(**args)
+
     else:
         print("No test found for \"%s\"" % args.get('test'))
 
@@ -94,7 +97,7 @@ def converging_test(**kwargs):
 def skewing_test(**kwargs):
     """Tests the accuracy of KMeans as gaussian blobs are skewed in the y axis.
     std for y-axis = std + (var_rate * step)"""
-    runs = kwargs.get('runs', 100)
+    runs = kwargs.get('runs', 500)
     steps = kwargs.get('steps', 20)
     n_samples = kwargs.get('samples', 200)
     variance = kwargs.get('variance', 20.0)
@@ -135,7 +138,7 @@ def skewing_test(**kwargs):
             plt.scatter(x=x_s, y=y_s, c=range(len(x_s)), marker='x', s=100,
                         cmap=colors.ListedColormap(['k']))
             plt.xlabel("y standard dev.=%f: error-rate=%f +/-%f" % (result['var'], result['mean'], result['std']))
-            plt.title('Skew Test')
+            plt.title('Skew Test (Kmeans)')
             plt.axis('equal')
             gifwriter.grab_frame()
             plt.clf()
@@ -151,7 +154,7 @@ def skewing_test(**kwargs):
             plt.scatter(x=x_s, y=y_s, c=result['labels'],
                         cmap=colors.ListedColormap(['r', 'y', 'g', '#00FF00', 'b']))
             plt.xlabel("y standard dev.=%f: error-rate=%f +/-%f" % (result['var'], result['mean'], result['std']))
-            plt.title('Skew Test')
+            plt.title('Skew Test (Actual)')
             plt.axis('equal')
             gifwriter.grab_frame()
             plt.clf()
@@ -172,6 +175,89 @@ def skewing_test(**kwargs):
         print("saved %s" % filename)
 
 
+def unequal_var_test(**kwargs):
+    """Tests the accuracy of KMeans as one clusters distribution grows over the others."""
+    runs = kwargs.get('runs', 100)
+    steps = kwargs.get('steps', 20)
+    variance = kwargs.get('variance', 30.0)
+    maxdistance = kwargs.get('maxdistance', 10.0)
+    n_samples = kwargs.get('samples', 100)
+    std = kwargs.get('std', 1.0)
+    assert maxdistance > 0
+
+    results = list()
+
+    clusterparams = {'maxdistance': maxdistance,
+                     'n_samples': n_samples,
+                     'std_1': None,
+                     'std_2': std}
+
+    estimator = KMeans(n_clusters=3, init='k-means++')
+    for _x in np.linspace(1, variance, steps):
+        clusterparams['std_1'] = std * _x
+        _r = test_error_rate(estimator, clusterparams, gentype='unequal', runs=runs)
+        _r['var'] = _x
+        results.append(_r)
+
+        print("std=%f: error-rate=%f +/-%f" % (_x, _r['mean'], _r['std']))
+
+    # Save results to gif
+    if kwargs.get('gif') is not None:
+        filename = kwargs.get('gif')
+        if filename == 'default':
+            filename = 'unequal_var_test.gif'
+        fig = plt.figure()
+        gifwriter = anim.ImageMagickWriter(fps=1)
+        gifwriter.setup(fig, str(1) + filename, dpi=150)
+
+        # Estimated results.
+        for result in results:
+            x_s, y_s = result['samples'].T
+            plt.scatter(x=x_s, y=y_s, c=result['elabels'],
+                        cmap=colors.ListedColormap(['r', 'y', 'g', '#00FF00', 'b']))
+            x_s, y_s = result['clusters'].T
+            plt.scatter(x=x_s, y=y_s, c=range(len(x_s)), marker='x', s=100,
+                        cmap=colors.ListedColormap(['k']))
+            plt.xlabel("standard dev.=%f: error-rate=%f +/-%f" % (result['var'], result['mean'], result['std']))
+            plt.title('Unequal Variance Test (Kmeans)')
+            plt.axis('equal')
+            gifwriter.grab_frame()
+            plt.clf()
+        gifwriter.finish()
+        print("saved %s" % str(1) + filename)
+
+        fig = plt.figure()
+        gifwriter = anim.ImageMagickWriter(fps=1)
+        gifwriter.setup(fig, str(2) + filename, dpi=150)
+
+        # Actual labels.
+        for result in results:
+            x_s, y_s = result['samples'].T
+            plt.scatter(x=x_s, y=y_s, c=result['labels'],
+                        cmap=colors.ListedColormap(['r', 'y', 'g', '#00FF00', 'b']))
+            plt.xlabel("standard dev.=%f: error-rate=%f +/-%f" % (result['var'], result['mean'], result['std']))
+            plt.title('Unequal Variance Test (Actual)')
+            plt.axis('equal')
+            gifwriter.grab_frame()
+            plt.clf()
+        gifwriter.finish()
+        print("saved %s" % str(2) + filename)
+
+        if kwargs.get('graph') is not None:
+            filename = kwargs.get('graph')
+            if filename == 'default':
+                filename = 'unequal_var_test.png'
+            fig = plt.figure()
+            for result in results:
+                plt.errorbar(result['var'], result['mean'], yerr=result['std'], fmt='ob', capsize=5)
+            plt.xlabel('standard dev.')
+            plt.ylabel('error rate')
+            plt.title('Unequal Variance Test')
+            plt.savefig(filename, dpi=150)
+            print("saved %s" % filename)
+
+
+
 def test_error_rate(estimator, clusterparams, gentype='default', runs=100):
     """This function takes clusterparams and uses it to generate sample data
     and test KMeans over the amount of runs given then returning the average
@@ -184,6 +270,9 @@ def test_error_rate(estimator, clusterparams, gentype='default', runs=100):
             samples, labels = make_blobs(**clusterparams)
         elif gentype == 'skewed':
             samples, labels = make_skewed_blobs(**clusterparams)
+        elif gentype == 'unequal':
+            samples, labels = make_unequal_blobs(**clusterparams)
+
         estimator.fit(samples)
 
         # Actual and estimated labels won't match so we must map them.
@@ -239,6 +328,21 @@ def make_skewed_blobs(maxdistance, std_x, std_y, n_samples):
         samples_y.append(centers[label][1] + (std_y * np.random.randn()))
     return np.concatenate((samples_x, np.array([samples_y]).T), axis=1), labels
 
+def make_unequal_blobs(maxdistance, std_1, std_2, n_samples):
+    """Makes unequal blobs."""
+    centers = generate3_equidistance_points(maxdistance)
+    samples_1, labels_1 = make_blobs(n_samples=np.floor_divide(n_samples, 3),
+                                     cluster_std=std_1,
+                                     centers=[centers[0]])
+    samples_2, labels_2 = make_blobs(n_samples=int(np.ceil((n_samples * 2) / 3)),
+                                     cluster_std=std_2,
+                                     centers=centers[1:])
+
+    labels_1 = np.array(labels_1) + 2
+    samples = np.concatenate((np.array(samples_1), np.array(samples_2)), axis=0)
+    labels = np.concatenate((labels_1, np.array(labels_2)), axis=0)
+    return samples, labels
+
 
 def generate3_equidistance_points(distance=5.0):
     """Returns list of 3 tuples representing 3 equidistant points."""
@@ -266,11 +370,11 @@ def argumentparse():
                         help='Min distance for separation of clusters.')
     parser.add_argument('--variance', type=float, metavar='var',
                         help='Variance used by some tests.')
-    parser.add_argument('--gif', type=str, metavar='filename', default='default',
+    parser.add_argument('--gif', type=str, metavar='filename',
                         help='Save gif of test with this name.')
     parser.add_argument('--fps', type=int,
                         help='Save gif of test with this fps (if --save is used).')
-    parser.add_argument('--graph', type=str, metavar='filename', default='default',
+    parser.add_argument('--graph', type=str, metavar='filename',
                         help='Save graph of test results.')
     args = parser.parse_args()
 
